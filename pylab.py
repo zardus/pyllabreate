@@ -34,6 +34,10 @@ class IDAItem(object):
         except OSError: pass
 
     @staticmethod
+    def _fix_path(s):
+        return s.replace('/', '_')
+
+    @staticmethod
     def _instantiate(attributes):
         if not isinstance(attributes, dict):
             return attributes
@@ -60,18 +64,16 @@ class IDAItem(object):
 
     @property
     def uuid(self):
-        raise NotImplementedError()
+        return '%x' % self.addr #pylint:disable=no-member
 
-    @staticmethod
-    def _is_collection(a):
-        return isinstance(a, (dict, tuple, list, set))
-
-    def _all_attributes(self):
-        return { k:v for k,v in self.__dict__.items() if not k.startswith('_') }
-
-    @staticmethod
-    def _needs_dir(a):
-        return isinstance(a, IDAItem) and len(a.ida_items) + len(a.collections) > 0
+    def __lt__(self, other):
+        return self.uuid < other.uuid
+    def __gt__(self, other):
+        return self.uuid > other.uuid
+    def __le__(self, other):
+        return self.uuid <= other.uuid
+    def __ge__(self, other):
+        return self.uuid >= other.uuid
 
     @property
     def collections(self):
@@ -90,6 +92,23 @@ class IDAItem(object):
     def _set_attributes(self, s):
         self.__dict__.update({ k:v for k,v in s.items() if not k.startswith('_') })
 
+    def apply(self): pass
+
+    #
+    # Static stuff
+    #
+
+    @staticmethod
+    def _is_collection(a):
+        return isinstance(a, (dict, tuple, list, set))
+
+    def _all_attributes(self):
+        return { k:v for k,v in self.__dict__.items() if not k.startswith('_') }
+
+    @staticmethod
+    def _needs_dir(a):
+        return isinstance(a, IDAItem) and len(a.ida_items) + len(a.collections) > 0
+
     #
     # This is getting out of hand
     #
@@ -104,10 +123,11 @@ class IDAItem(object):
                 self._dump(self.literals, f)
 
             for attr, members in self.collections.items():
-                IDAItem.dump_multiple(members, os.path.join(where, attr))
+                self._make_dir(where)
+                IDAItem.dump_multiple(members, os.path.join(where, self._fix_path(attr)))
 
             for attr, members in self.ida_items.items():
-                IDAItem.dump(members, os.path.join(where, attr))
+                IDAItem.dump(members, os.path.join(where, self._fix_path(attr)))
         else:
             if type(where) is not file:
                 with open(where, 'a') as f:
@@ -118,7 +138,7 @@ class IDAItem(object):
     @staticmethod
     def dump_multiple(what, where):
         for o in what:
-            if IDAItem._needs_dir(o): o.dump(os.path.join(where, o.uuid))
+            if IDAItem._needs_dir(o): o.dump(os.path.join(where, IDAItem._fix_path(o.uuid)))
             else: o.dump(where)
 
     @staticmethod
@@ -138,7 +158,6 @@ class IDAItem(object):
             # this is a collection
             result = [ ]
             for c in os.listdir(where):
-                if c == 'literals': continue
                 result.append(IDAItem.load(os.path.join(where, c)))
             return result
         else:
@@ -150,60 +169,191 @@ class IDAItem(object):
                     else: results.append(IDAItem._instantiate(s))
                 return results
 
-class Instruction(IDAItem):
+#
+# Actual IDA constructs
+#
+
+class Comment(IDAItem):
     def __init__(self, addr):
         self.addr = addr
         self.comment = ida.idc.Comment(self.addr)
         self.repeatable_comment = ida.idc.RptCmt(self.addr)
 
     def apply(self):
-        ida.idc.MakeComm(self.addr, self.comment)
-        ida.idc.MakeRptComm(self.addr, self.comment)
+        if self.comment: ida.idc.MakeComm(self.addr, str(self.comment))
+        if self.repeatable_comment: ida.idc.MakeRptCmt(self.addr, str(self.repeatable_comment))
+
+    @classmethod
+    def export(cls, function_addr):
+        results = [ ]
+        for i in idautils.FuncItems(function_addr):
+            c = Comment(i)
+            if c.comment or c.repeatable_comment:
+                results.append(c)
+        return sorted(results)
+
+class Member(IDAItem):
+    def __init__(self, sid, offset, name, size):
+        self.offset = offset
+        self.name = name
+        self.size = size
+        self.struct_name = ida.idc.GetStrucName(sid)
+
+        self.flag = ida.idc.GetMemberFlag(sid, offset)
+        self.type = ida.idc.GetType(ida.idc.GetMemberId(sid, offset))
+        self.comment = ida.idc.GetMemberComment(sid, offset, False)
+        self.repeatable_comment = ida.idc.GetMemberComment(sid, offset, True)
 
     @property
-    def should_dump(self):
-        return self.comment or self.repeatable_comment
+    def sid(self):
+        return ida.idc.GetStrucIdByName(str(self.struct_name))
 
     @property
-    def should_apply(self):
-        return self.comment or self.repeatable_comment
+    def typeid(self): #pylint:disable=no-self-use
+        return -1
+
+    def overlaps(self, other):
+        their_bytes = set(range(other.offset, other.offset + other.size))
+        our_bytes = set(range(self.offset, self.offset + self.size))
+        return len(our_bytes | their_bytes) != 0
+
+    def _overlapping_members(self):
+        overlapping = [ ]
+
+        others = ida.idautils.StructMembers(self.sid)
+        for offset,name,size in others:
+            m = Member(self.sid, offset, name, size)
+            if self.overlaps(m): overlapping.append(m)
+
+        return overlapping
+
+    def apply(self):
+        # first, delete any overlapping members
+        overlapping = self._overlapping_members()
+        for o in overlapping:
+            ida.idc.DelStrucMember(o.sid, o.offset)
+
+        # now, actually apply ours!
+        m = ida.idc.AddStrucMember(self.sid, str(self.name), self.offset, self.flag, self.typeid, self.size)
+        print str(self.name), m
+
+        if self.comment:
+            ida.idc.SetMemberComment(self.sid, self.offset, str(self.comment), False)
+        if self.repeatable_comment:
+            ida.idc.SetMemberComment(self.sid, self.offset, str(self.repeatable_comment), True)
+
+
+    @classmethod
+    def export(cls, sid):
+        results = [ ]
+
+        for offset, name, size in ida.idautils.StructMembers(sid):
+            results.append(Member(sid, offset, name, size))
+
+        return results
+
+class Struct(IDAItem):
+    def __new__(cls, *args, **kwargs):
+        self = object.__new__(cls, *args, **kwargs)
+        self.members = [ ]
+        return self
+
+    def __init__(self, sid):
+        self.name = ida.idc.GetStrucName(sid)
+        self.size = ida.idc.GetStrucSize(sid)
+        self.comment = ida.idc.GetStrucComment(sid, False)
+        self.repeatable_comment = ida.idc.GetStrucComment(sid, False)
+
+        self.members = Member.export(sid)
 
     @property
     def uuid(self):
-        return '%x' % self.addr
+        return self.name
 
+    def apply_members(self):
+        print "STARTING FOR %s" % self.name
+        for m in self.members:
+            m.apply()
 
-class Block(IDAItem):
-    def __init__(self, start_addr, end_addr):
-        self.start = start_addr
-        self.end = end_addr
-        self.instructions = [ Instruction(i) for i in ida.idautils.Heads(self.start, self.end) ]
+    def apply_self(self):
+        sid = ida.idc.GetStrucIdByName(str(self.name))
+        if sid == ida.idc.BADADDR:
+            sid = ida.idc.AddStruc(ida.idc.GetStrucQty(), str(self.name))
+            ida.idc.SetStrucName(sid, str(self.name))
 
-    @property
-    def uuid(self):
-        return '%x' % self.start
+        ida.idc.SetStrucComment(sid, str(self.comment), False)
+        ida.idc.SetStrucComment(sid, str(self.repeatable_comment), True)
 
-class Function(IDAItem):
+    @classmethod
+    def export(cls):
+        results = [ ]
+
+        for _, struct_idx, _ in ida.idautils.Structs():
+            results.append(Struct(struct_idx))
+
+        for f in ida.idautils.Functions(0, ida.idc.MaxEA()):
+            f = idc.GetFrame(f)
+            if f: results.append(Struct(f))
+
+        return results
+
+class FunctionInfo(IDAItem):
+    def __new__(cls, *args, **kwargs):
+        self = object.__new__(cls, *args, **kwargs)
+        self.comments = [ ]
+        return self
+
+    def __init__(self, f_addr):
+        self.addr = f_addr
+        self.comments = Comment.export(f_addr)
+
+    def apply(self):
+        for c in self.comments:
+            c.apply()
+
+    @classmethod
+    def export(cls):
+        return sorted(cls(f) for f in ida.idautils.Functions(0, ida.idc.MaxEA()))
+
+class FunctionName(IDAItem):
     def __init__(self, f_addr):
         self.addr = f_addr
         self.name = ida.idc.Name(self.addr)
 
-        chart = ida.idaapi.FlowChart(ida.idaapi.get_func(self.addr))
-        self.blocks = [ Block(block.startEA, block.endEA) for block in chart ]
+    def apply(self):
+        if ida.idc.Name(self.addr) != str(self.name):
+            ida.idc.MakeName(self.addr, str(self.name))
 
-    @property
-    def uuid(self):
-        return '%x' % self.addr
+    @classmethod
+    def export(cls):
+        return sorted(cls(f) for f in ida.idautils.Functions(0, ida.idc.MaxEA()))
 
 class IDAState(IDAItem):
+    def __new__(cls, *args, **kwargs):
+        self = object.__new__(cls, *args, **kwargs)
+        self.function_comments = [ ]
+        self.function_names = [ ]
+        self.structures = [ ]
+        return self
+
     def __init__(self):
-        ida_functions = list(ida.idautils.Functions(0, ida.idc.MaxEA()))
-        self.functions = [ Function(f) for f in ida_functions ]
+        self.function_comments = FunctionInfo.export()
+        self.function_names = FunctionName.export()
+        self.structures = Struct.export()
+
+    def apply(self):
+        for f in self.function_names: f.apply()
+        for f in self.function_comments: f.apply()
+
+        # make all the structs first, then make the members
+        for f in self.structures: f.apply_self()
+        for f in self.structures: f.apply_members()
 
     @property
     def uuid(self):
         return 'state'
 
-real_state = IDAState()
-real_state.dump('/tmp/asdf')
-#loaded_state = IDAItem.load('/tmp/asdf')
+#real_state = IDAState()
+#real_state.dump('/tmp/asdf')
+loaded_state = IDAItem.load('/tmp/asdf')
+loaded_state.apply() #pylint:disable=no-member
