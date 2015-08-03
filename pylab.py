@@ -355,5 +355,8 @@ class IDAState(IDAItem):
 
 #real_state = IDAState()
 #real_state.dump('/tmp/asdf')
-loaded_state = IDAItem.load('/tmp/asdf')
-loaded_state.apply() #pylint:disable=no-member
+
+#loaded_state = IDAItem.load('/tmp/asdf')
+#loaded_state.apply() #pylint:disable=no-member
+
+
