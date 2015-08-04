@@ -6,12 +6,13 @@ import shutil
 import time
 import threading
 import socket
+import idaapi
 from pylab import IDAState,IDAItem
 
 
 class Pyllabreate:
 
-    auto_time = 10.0
+    auto_time = 15.0
 
     def __init__(self,git_folder):
         self.debug = False
@@ -31,6 +32,7 @@ class Pyllabreate:
 
         self.auto_enabled = False
         self.looper_thread = None
+        self.wait_ida = False
 
 
     def _exec_cmd(self,cmd):
@@ -62,10 +64,24 @@ class Pyllabreate:
 
     def _update_cycle(self):
         print "===update_cycle==="
-        self.save()
+        self.wait_ida = True
+        idaapi.execute_sync(self.save,idaapi.MFF_READ)
+        self._wait_for_ida()
+
         self.pull()
-        self.load()
+        
+        self.wait_ida = True
+        idaapi.execute_sync(self.load,idaapi.MFF_WRITE)
+        self._wait_for_ida()
+
         self.push()
+
+
+    def _wait_for_ida(self):
+        while True:
+            if self.wait_ida == False:
+                return
+            time.sleep(0.1)
 
 
     def _looper(self):
@@ -81,8 +97,8 @@ class Pyllabreate:
             last_run = time.time()
             self._update_cycle()
 
-
     ##########
+
 
     def load(self):
         print "load"
@@ -91,6 +107,7 @@ class Pyllabreate:
             loaded_state.apply()
         else:
             print "empty state!"
+        self.wait_ida = False
 
 
     def save(self):
@@ -99,23 +116,27 @@ class Pyllabreate:
         if(os.path.exists(os.path.join(self.snapshot_folder,"function_names"))):
             shutil.rmtree(self.snapshot_folder)
         else:
-            print "something is wrong with your git_folder:",self.git_folder
-            return
+            #this is the first time we save or something is wrong with git_folder
+            pass
         real_state = IDAState()
         real_state.dump(self.snapshot_folder)
+        self._exec_cmd(["add","."])
+        self.wait_ida = False
 
 
     def push(self):
         print "push"
-        self._exec_cmd(["add","."])
         self._exec_cmd(["commit","-am",self.userid+"[autosave]"])
-        #TODO ideally we want the user to be able to select the branch, but we need to put explicitly origin/master the first time
-        self._exec_cmd(["push","origin","master"]) 
+        res = self._exec_cmd(["branch","-r"])[0]
+        if res == "": #no default is set, just use origin master
+            self._exec_cmd(["push","-u","origin","master"]) 
+        else: #use default configuration
+            self._exec_cmd(["push"]) 
 
 
     def pull(self):
         print "pull"
-        res = self._exec_cmd(["pull","-Xtheirs","origin","master"])
-        self._exec_cmd(["clean","-f","-d"])
+        res = self._exec_cmd(["pull","-Xours"])
+        #self._exec_cmd(["clean","-f","-d"])
 
 
