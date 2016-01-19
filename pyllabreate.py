@@ -1,4 +1,8 @@
 
+import idautils #pylint:disable=import-error,unused-import
+import idaapi #pylint:disable=import-error,unused-import
+import idc #pylint:disable=import-error,unused-import
+
 import os
 import subprocess
 import random
