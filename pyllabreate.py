@@ -140,6 +140,7 @@ class Pyllabreate:
         * master 6f84c29 [origin/master: gone] asd
         So, the first pull will file, but the check on push should fix it
         '''
+        #FIXME: it seems that when someone joins the party he sometimes resets the idb
         print "push"
         self._exec_cmd(["commit","-am",self.userid+"[autosave]"])
         res = self._exec_cmd(["branch","-r"])[0]
