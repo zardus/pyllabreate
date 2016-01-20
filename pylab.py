@@ -353,8 +353,8 @@ class IDAState(IDAItem):
     def uuid(self):
         return 'state'
 
-real_state = IDAState()
-real_state.dump('/tmp/asdf')
+#real_state = IDAState()
+#real_state.dump('/tmp/asdf')
 
 #loaded_state = IDAItem.load('/tmp/asdf')
 #loaded_state.apply() #pylint:disable=no-member

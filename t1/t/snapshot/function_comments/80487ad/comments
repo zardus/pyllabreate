@@ -1,0 +1,5 @@
+{"comment": "size", "repeatable_comment": null, "addr": 134514614, "__class__": "Comment"}
+{"comment": "nbytes", "repeatable_comment": null, "addr": 134514634, "__class__": "Comment"}
+{"comment": "buf", "repeatable_comment": null, "addr": 134514641, "__class__": "Comment"}
+{"comment": "fd", "repeatable_comment": null, "addr": 134514645, "__class__": "Comment"}
+{"comment": "stream", "repeatable_comment": null, "addr": 134514694, "__class__": "Comment"}

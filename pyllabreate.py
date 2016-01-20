@@ -66,16 +66,20 @@ class Pyllabreate:
         #it seems that IDAPython does not like joining...
 
 
+    def locked_cycle(self):
+    	self.save()
+    	self.pull()
+    	self.load()
+    	self.push()
+
+
+
+
     def _update_cycle(self):
         print "===update_cycle==="
-        self.wait_ida = True
-        idaapi.execute_sync(self.save,idaapi.MFF_READ)
-        self._wait_for_ida()
 
-        self.pull()
-        
         self.wait_ida = True
-        idaapi.execute_sync(self.load,idaapi.MFF_WRITE)
+        idaapi.execute_sync(self.locked_cycle,idaapi.MFF_READ)
         self._wait_for_ida()
 
         self.push()
@@ -134,13 +138,14 @@ class Pyllabreate:
         res = self._exec_cmd(["branch","-r"])[0]
         if res == "": #no default is set, just use origin master
             self._exec_cmd(["push","-u","origin","master"]) 
+        res = self._exec_cmd(["branch","-r"])[0]
         else: #use default configuration
             self._exec_cmd(["push"]) 
 
 
     def pull(self):
         print "pull"
-        res = self._exec_cmd(["pull","-Xours"])
-        #self._exec_cmd(["clean","-f","-d"])
+        res = self._exec_cmd(["pull","-Xtheirs"])
+        self._exec_cmd(["clean","-f","-d"])
 
 

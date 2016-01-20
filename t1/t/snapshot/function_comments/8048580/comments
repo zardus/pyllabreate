@@ -1,0 +1,7 @@
+{"comment": "stack_end", "repeatable_comment": null, "addr": 134514057, "__class__": "Comment"}
+{"comment": "rtld_fini", "repeatable_comment": null, "addr": 134514058, "__class__": "Comment"}
+{"comment": "fini", "repeatable_comment": null, "addr": 134514059, "__class__": "Comment"}
+{"comment": "init", "repeatable_comment": null, "addr": 134514064, "__class__": "Comment"}
+{"comment": "ubp_av", "repeatable_comment": null, "addr": 134514069, "__class__": "Comment"}
+{"comment": "argc", "repeatable_comment": null, "addr": 134514070, "__class__": "Comment"}
+{"comment": "main", "repeatable_comment": null, "addr": 134514071, "__class__": "Comment"}
