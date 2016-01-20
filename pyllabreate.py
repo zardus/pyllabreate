@@ -67,10 +67,11 @@ class Pyllabreate:
 
 
     def locked_cycle(self):
-    	self.save()
-    	self.pull()
-    	self.load()
-    	self.push()
+        self.save()
+        #FIXME put git remote stuff outside the lock and here do only the merge
+        self.pull()
+        self.load()
+        self.push()
 
 
 
@@ -133,18 +134,26 @@ class Pyllabreate:
 
 
     def push(self):
+        '''
+        FIXME before touching git we need to check that we have a branch
+        that means git branch -vv should return something like: git branch -vv
+        * master 6f84c29 [origin/master: gone] asd
+        So, the first pull will file, but the check on push should fix it
+        '''
         print "push"
         self._exec_cmd(["commit","-am",self.userid+"[autosave]"])
         res = self._exec_cmd(["branch","-r"])[0]
         if res == "": #no default is set, just use origin master
             self._exec_cmd(["push","-u","origin","master"]) 
-        res = self._exec_cmd(["branch","-r"])[0]
         else: #use default configuration
             self._exec_cmd(["push"]) 
 
 
     def pull(self):
         print "pull"
+        res = self._exec_cmd(["branch","-r"])[0]
+        if res == "": #no default is set, just use origin master
+            self._exec_cmd(["push","-u","origin","master","-Xtheirs"]) 
         res = self._exec_cmd(["pull","-Xtheirs"])
         self._exec_cmd(["clean","-f","-d"])
 
