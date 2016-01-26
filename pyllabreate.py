@@ -17,12 +17,12 @@ from pylab import IDAState,IDAItem
 
 class Pyllabreate:
 
-    auto_time = 15.0
-
-    def __init__(self,local=None,remote=None,repository="origin",branch="master",debug=False):
+    def __init__(self,local=None,remote=None,repository="origin",branch="master",auto_time=15.0,debug=True):
+        #FIXME: for now we keep debug = True as default
         self.debug = debug
         self.repository = repository
         self.branch = branch
+        self.auto_time = auto_time
         
         #I cannot use distutils.spawn in ida :-(
         pipe = subprocess.PIPE
@@ -56,11 +56,12 @@ class Pyllabreate:
 
     ##########
 
-    def start_auto(self):
+    def start_auto(self,keep_local=False,base_commit=None):
+        #FIXME ideally keep_local should be default, but it needs to be implemented and tested
         print "start_auto!"
         self.auto_enabled = True
         self.first_run = True
-        self.looper_thread = threading.Thread(target=self._looper)
+        self.looper_thread = threading.Thread(target=self._looper,args=[keep_local,base_commit])
         self.looper_thread.start()
 
 
@@ -74,57 +75,82 @@ class Pyllabreate:
         self.save()
         self._exec_cmd(["add","."])
         self._exec_cmd(["commit","-am",self.userid+"[autosave]"])
-        self._exec_cmd(["merge",self.repository,self.branch, \
+        self._exec_cmd(["merge",self.repository+"/"+self.branch, \
                 "-X","theirs","-m",self.userid+"[automerge]"])
         self.load()
 
 
-    def _update_cycle(self):
-        print "===update_cycle==="
+    def _update_cycle(self,first_run,keep_local,base_commit):
+        print "===update_cycle===",first_run,keep_local,base_commit
 
-        self._exec_cmd(["fetch",self.repository,self.branch])
-        self._locked_execution(self.locked_cycle,idaapi.MFF_WRITE)
-        self._exec_cmd(["push",self.repository,self.branch])
-        self._exec_cmd(["clean","-f","-d"])
+        if first_run:
+            if not keep_local:
+                self._exec_cmd(["pull","-u",self.repository,self.branch])
+                self._locked_execution(self.load,idaapi.MFF_WRITE)
+            else:
+                pass
+                '''
+                #basically we want to rebase what has been done on top of the local changes
+                #in case of conflicts what has been done on git wins (which is in the master branch)
+                git pull
+                if base_commit != None:
+                    first_commit = base_commit
+                else:
+                    first_commit = git rev-list --max-parents=0 HEAD
+                git checkout -b tmp1 first_commit
+                    save
+                    git add .
+                    git commit -am "initial stuff"
+                    git checkout self.branch
+                    git merge tmp1 -X ours
+                    load
+                git push
+                git clean -f -d
+                '''
+        else:
+            self._exec_cmd(["fetch",self.repository,self.branch])
+            self._locked_execution(self.locked_cycle,idaapi.MFF_WRITE)
+            self._exec_cmd(["push","-u",self.repository,self.branch])
+            self._exec_cmd(["clean","-f","-d"])
 
 
 
-    def _locked_execution(self,func,ida_lock_type):
-        def make_function_locked(func):
-            def inner_locked():
+    def _locked_execution(self,to_lock_function,ida_lock_type):
+        def make_function_waitable(f):
+            def inner():
                 try:
                     start = time.time()
-                    return func()
+                    return f()
                 finally:
                     if self.debug:
                         print "execution locked for:",time.time()-start
                     q.put(None)
-            return inner_locked
+            return inner
 
         q = Queue.Queue()
-        idaapi.execute_sync(make_function_locked(func),ida_lock_type)
+        idaapi.execute_sync(make_function_waitable(to_lock_function),ida_lock_type)
         q.get()
 
 
-    def _looper(self):
+    def _looper(self,keep_local,base_commit):
         print "thread started!"
         last_run = time.time()
+        first_run  = True
         while True:
             time.sleep(0.1)
             if not self.auto_enabled:
                 print "stopping thread"
                 return
-            if self.first_run == False and time.time()-last_run < self.auto_time:
+            if first_run == False and time.time()-last_run < self.auto_time:
                 continue
-            self.first_run = False
             last_run = time.time()
-            self._update_cycle()
-
-    ##########
+            self._update_cycle(first_run,keep_local,base_commit)
+            first_run = False
 
 
     def load(self):
-        print "load"
+        if self.debug:
+            print "load"
         loaded_state = IDAItem.load(self.snapshot_folder)
         if loaded_state != []:
             loaded_state.apply()
@@ -133,7 +159,8 @@ class Pyllabreate:
 
 
     def save(self):
-        print "save"
+        if self.debug:
+            print "save"
         #paranoid check
         if(os.path.exists(os.path.join(self.snapshot_folder,"function_names"))):
             #in case pylab saves in a differential way, we do not want to delete this
@@ -145,27 +172,4 @@ class Pyllabreate:
         real_state.dump(self.snapshot_folder)
 
 
-
-'''
-add immediate pull after init (option, default on)
-add debug option in init
-add git_address/local option in init (normally: local = git repo folder, if only git_address: local in tmp)
-add binary to repo
-add idbs to repo  
-origin/master everywhere (values by deault, changeable in init)
-avoid ida freeze on exit
-
-==============
-fetch
----
-save
-commit
-merge -X theirs (because rebase prefer ours even with -X theirs)
-clean files
-load
----
-push
-
-
-'''
 
